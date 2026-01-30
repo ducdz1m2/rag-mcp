@@ -68,8 +68,41 @@ def process_pdf_with_ocr(pdf_path):
     doc.close()
     return documents
 
+def process_pdf_simple(pdf_path):
+    """Process PDF without OCR - just extract text directly"""
+    doc = fitz.open(pdf_path)
+    documents = []
+    
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        
+        # Only extract text directly from PDF
+        page_text = page.get_text().strip()
+        
+        # Clean up the text but preserve structure
+        if page_text:
+            # Remove excessive whitespace but keep some line breaks for structure
+            lines = page_text.split('\n')
+            cleaned_lines = []
+            for line in lines:
+                line = line.strip()
+                if line:  # Skip empty lines
+                    cleaned_lines.append(line)
+            
+            cleaned_text = ' '.join(cleaned_lines)
+            
+            # Only add if we have meaningful content
+            if len(cleaned_text) > 30:  # Lower threshold to catch more content
+                documents.append(Document(
+                    page_content=cleaned_text,
+                    metadata={"source": os.path.basename(pdf_path), "page": page_num + 1}
+                ))
+            
+    doc.close()
+    return documents
+
 def build_vector_db():
-    print("--- 🚀 Fedora OCR Ingest Mode ---")
+    print("--- 🚀 PDF Text Extraction with OCR Mode ---")
     
     if not os.path.exists(DOCS_PATH):
         os.makedirs(DOCS_PATH)
@@ -79,17 +112,21 @@ def build_vector_db():
     pdf_files = [f for f in os.listdir(DOCS_PATH) if f.endswith(".pdf")]
     
     for file in pdf_files:
-        print(f"📄 Đang xử lý: {file}...")
+        print(f"📄 Đang xử lý với OCR: {file}...")
         all_docs.extend(process_pdf_with_ocr(os.path.join(DOCS_PATH, file)))
 
     if not all_docs:
         print("❌ Không tìm thấy nội dung nào để index!")
         return
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=70)
+    # Increase chunk size for better context
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
     texts = splitter.split_documents(all_docs)
 
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    # Use better embedding model for Vietnamese
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
     vectorstore = FAISS.from_documents(texts, embeddings)
     vectorstore.save_local(VECTOR_DB_PATH)
     print(f"✅ Đã lưu thành công {len(texts)} chunks!")
